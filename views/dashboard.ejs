@@ -5,82 +5,116 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Admin Dashboard</title>
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet" />
+  <script src="/socket.io/socket.io.js"></script>
+  <style>
+    body {
+      background-color: #f8f9fa;
+    }
+    .dashboard-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+    .table td pre {
+      white-space: pre-wrap;
+      margin: 0;
+      font-size: 0.95rem;
+    }
+  </style>
 </head>
 <body>
-  <div class="container mt-5">
-    <h1 class="mb-4">Admin Dashboard</h1>
-    <a href="/admin/logout" class="btn btn-danger mb-3">Logout</a>
+  <div class="container py-4">
+    <!-- Header -->
+    <div class="dashboard-header mb-4">
+      <h1 class="mb-0">📩 Admin Dashboard</h1>
+      <a href="/admin/logout" class="btn btn-danger">Logout</a>
+    </div>
 
-    <table class="table table-striped">
-      <thead>
-        <tr>
-          <th>Sender</th>
-          <th>Message</th>
-          <th>Received At</th>
-          <th>Actions</th>
-        </tr>
-      </thead>
-      <tbody id="messagesBody">
-        <% if (messages && messages.length > 0) { %>
-          <% messages.forEach(function(msg) { %>
+    <!-- Messages Table -->
+    <div class="card shadow-sm">
+      <div class="card-body p-0">
+        <table class="table table-hover table-striped mb-0">
+          <thead class="table-dark">
             <tr>
-              <td><%= msg.sender %></td>
-              <td><pre style="white-space: pre-wrap; margin:0;"><%= msg.message %></pre></td>
-              <td><%= new Date(msg.createdAt).toLocaleString() %></td>
-              <td>
-                <form action="/admin/messages/<%= msg._id %>/delete" method="POST" onsubmit="return confirm('Delete this message?');">
-                  <button type="submit" class="btn btn-sm btn-danger">Delete</button>
-                </form>
-              </td>
+              <th>Sender</th>
+              <th>Message</th>
+              <th>Received At</th>
+              <th>Actions</th>
             </tr>
-          <% }) %>
-        <% } else { %>
-          <tr>
-            <td colspan="4" class="text-center">No messages found</td>
-          </tr>
-        <% } %>
-      </tbody>
-    </table>
+          </thead>
+          <tbody id="messagesBody">
+            <% if (messages && messages.length > 0) { %>
+              <% messages.forEach(function(msg) { %>
+                <tr data-id="<%= msg._id %>">
+                  <td><%= msg.sender %></td>
+                  <td><pre><%= msg.message %></pre></td>
+                  <td><%= new Date(msg.createdAt).toLocaleString() %></td>
+                  <td>
+                    <form action="/admin/messages/<%= msg._id %>/delete" method="POST" onsubmit="return confirm('Delete this message?');">
+                      <button type="submit" class="btn btn-sm btn-danger">Delete</button>
+                    </form>
+                  </td>
+                </tr>
+              <% }) %>
+            <% } else { %>
+              <tr>
+                <td colspan="4" class="text-center">No messages found</td>
+              </tr>
+            <% } %>
+          </tbody>
+        </table>
+      </div>
+    </div>
   </div>
 
 <script>
-  async function fetchLatestMessages() {
-    try {
-      const res = await fetch('/admin/messages/latest', { credentials: 'same-origin' });
-      const data = await res.json();
-      if (!data.ok) return;
+  const socket = io();
+  const tbody = document.getElementById('messagesBody');
 
-      const tbody = document.getElementById('messagesBody');
-      tbody.innerHTML = '';
+  // Render a single row
+  function renderRow(msg) {
+    return `
+      <tr data-id="${msg._id}">
+        <td>${msg.sender}</td>
+        <td><pre>${msg.message}</pre></td>
+        <td>${new Date(msg.createdAt).toLocaleString()}</td>
+        <td>
+          <form action="/admin/messages/${msg._id}/delete" method="POST" onsubmit="return confirm('Delete this message?');">
+            <button type="submit" class="btn btn-sm btn-danger">Delete</button>
+          </form>
+        </td>
+      </tr>
+    `;
+  }
 
-      if (data.messages.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="4" class="text-center">No messages found</td></tr>';
-        return;
-      }
-
-      data.messages.forEach(msg => {
-        const row = document.createElement('tr');
-        row.innerHTML = `
-          <td>${msg.sender}</td>
-          <td><pre style="white-space: pre-wrap; margin:0;">${msg.message}</pre></td>
-          <td>${new Date(msg.createdAt).toLocaleString()}</td>
-          <td>
-            <form action="/admin/messages/${msg._id}/delete" method="POST" onsubmit="return confirm('Delete this message?');">
-              <button type="submit" class="btn btn-sm btn-danger">Delete</button>
-            </form>
-          </td>
-        `;
-        tbody.appendChild(row);
-      });
-    } catch (e) {
-      console.error('Error fetching messages:', e);
+  // Add new message to table
+  function addMessage(msg) {
+    const existing = tbody.querySelector(`[data-id="${msg._id}"]`);
+    if (!existing) {
+      tbody.insertAdjacentHTML('afterbegin', renderRow(msg));
     }
   }
 
-  // Initial load + polling every 5 seconds
-  fetchLatestMessages();
-  setInterval(fetchLatestMessages, 5000);
-</script>
+  // Fetch all messages
+  function fetchMessages() {
+    fetch('/admin/messages-json')
+      .then(res => res.json())
+      .then(data => {
+        tbody.innerHTML = data.length
+          ? data.map(renderRow).join('')
+          : `<tr><td colspan="4" class="text-center">No messages found</td></tr>`;
+      })
+      .catch(err => console.error(err));
+  }
 
+  // Listen for real-time new messages
+  socket.on('newMessage', msg => {
+    addMessage(msg);
+  });
+
+  // Initial load
+  fetchMessages();
+</script>
 </body>
 </html>
