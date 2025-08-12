@@ -20,7 +20,7 @@ const PORT = process.env.PORT || 4000;
   try {
     await connectDB(process.env.MONGO_URI);
 
-    // Ensure an admin exists using env ADMIN_USERNAME / ADMIN_PASSWORD
+    // Ensure admin exists from env vars
     const username = process.env.ADMIN_USERNAME;
     const password = process.env.ADMIN_PASSWORD;
     if (username && password) {
@@ -47,26 +47,26 @@ app.set('views', path.join(__dirname, 'views'));
 app.set('view engine', 'ejs');
 app.use(express.static(path.join(__dirname, 'public')));
 
-// Sessions (store in Mongo)
+// Sessions
 app.use(
   session({
     secret: process.env.SESSION_SECRET || 'dev-secret',
     resave: false,
     saveUninitialized: false,
     store: MongoStore.create({ mongoUrl: process.env.MONGO_URI, collectionName: 'sessions' }),
-    cookie: { maxAge: 1000 * 60 * 60 * 24 } // 1 day
+    cookie: { maxAge: 1000 * 60 * 60 * 24 }
   })
 );
 
 // Rate limiter for /api/messages
 const messagesLimiter = rateLimit({
-  windowMs: 60 * 1000, // 1 minute
-  max: 120, // max 120 requests / device per minute
+  windowMs: 60 * 1000,
+  max: 120,
   standardHeaders: true,
   legacyHeaders: false
 });
 
-// Middleware to check API key (header x-api-key)
+// API key check middleware
 function checkApiKey(req, res, next) {
   const key = req.header('x-api-key') || req.header('Authorization')?.replace('Bearer ', '');
   if (!key || key !== process.env.API_KEY) {
@@ -75,22 +75,18 @@ function checkApiKey(req, res, next) {
   next();
 }
 
-/**
- * Simple message endpoint
- * POST /api/messages
- * body: { sender, message, timestamp, deviceSim1, deviceSim2 }
- */
+// Message receiver endpoint (no OTP filter, stores all)
 app.post('/api/messages', messagesLimiter, checkApiKey, async (req, res) => {
   try {
-    const { sender, message, timestamp, deviceSim1, deviceSim2 } = req.body;
-    if (!sender || !message) return res.status(400).json({ error: 'sender and message required' });
+    const { sender, message, timestamp } = req.body;
+    if (!sender || !message) {
+      return res.status(400).json({ error: 'sender and message required' });
+    }
 
     const msg = await Message.create({
       sender,
       message,
-      timestamp: timestamp ? new Date(timestamp) : undefined,
-      deviceSim1,
-      deviceSim2
+      timestamp: timestamp ? new Date(timestamp) : undefined
     });
 
     res.status(201).json({ ok: true, id: msg._id });
@@ -100,7 +96,7 @@ app.post('/api/messages', messagesLimiter, checkApiKey, async (req, res) => {
   }
 });
 
-// Admin login routes + dashboard
+// Admin login
 app.get('/admin/login', (req, res) => {
   res.render('login', { error: null });
 });
@@ -113,7 +109,6 @@ app.post('/admin/login', async (req, res) => {
   const ok = await bcrypt.compare(password, admin.passwordHash);
   if (!ok) return res.render('login', { error: 'Invalid credentials' });
 
-  // set session
   req.session.adminId = admin._id;
   res.redirect('/admin/dashboard');
 });
@@ -124,13 +119,13 @@ app.get('/admin/logout', (req, res) => {
   });
 });
 
-// auth middleware for admin pages
+// Admin auth middleware
 function requireAdmin(req, res, next) {
   if (!req.session?.adminId) return res.redirect('/admin/login');
   next();
 }
 
-// Admin dashboard: messages list
+// Dashboard with AJAX deletion
 app.get('/admin/dashboard', requireAdmin, async (req, res) => {
   const page = Math.max(1, parseInt(req.query.page || '1'));
   const limit = Math.min(100, parseInt(req.query.limit || '50'));
@@ -149,7 +144,17 @@ app.get('/admin/dashboard', requireAdmin, async (req, res) => {
   });
 });
 
-// simple root redirect
+// Delete message via AJAX
+app.delete('/admin/messages/:id', requireAdmin, async (req, res) => {
+  try {
+    await Message.findByIdAndDelete(req.params.id);
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: 'Failed to delete message' });
+  }
+});
+
+// Root redirect
 app.get('/', (req, res) => res.redirect('/admin/login'));
 
 app.listen(PORT, () => {
