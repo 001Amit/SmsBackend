@@ -16,12 +16,20 @@
       align-items: center;
       flex-wrap: wrap;
     }
-    /* Force long messages to stay in one row but wrap nicely inside the cell */
+    /* Long messages wrap nicely but stay in one cell */
     .table td.message-cell {
-      white-space: pre-wrap; 
+      white-space: pre-wrap;
       word-break: break-word;
       max-width: 500px;
       font-size: 0.95rem;
+    }
+    .device-badge {
+      font-size: 0.75rem;
+      background-color: #6c757d;
+      color: white;
+      border-radius: 0.25rem;
+      padding: 0.15rem 0.4rem;
+      margin-left: 0.25rem;
     }
   </style>
 </head>
@@ -49,7 +57,12 @@
             <% if (messages && messages.length > 0) { %>
               <% messages.forEach(function(msg) { %>
                 <tr data-id="<%= msg._id %>">
-                  <td><%= msg.sender %></td>
+                  <td>
+                    <%= msg.sender %>
+                    <% if (msg.deviceId) { %>
+                      <span class="device-badge"><%= msg.deviceId %></span>
+                    <% } %>
+                  </td>
                   <td class="message-cell"><%= msg.message %></td>
                   <td><%= new Date(msg.createdAt).toLocaleString() %></td>
                   <td>
@@ -75,9 +88,12 @@
   const tbody = document.getElementById('messagesBody');
 
   function renderRow(msg) {
+    const deviceBadge = msg.deviceId
+      ? `<span class="device-badge">${msg.deviceId}</span>`
+      : '';
     return `
       <tr data-id="${msg._id}">
-        <td>${msg.sender}</td>
+        <td>${msg.sender} ${deviceBadge}</td>
         <td class="message-cell">${msg.message}</td>
         <td>${new Date(msg.createdAt).toLocaleString()}</td>
         <td>
@@ -95,7 +111,7 @@
     }
   }
 
-  // Initial fetch
+  // Initial fetch of last messages
   fetch('/admin/messages-json')
     .then(res => res.json())
     .then(data => {
@@ -104,7 +120,7 @@
         : `<tr><td colspan="4" class="text-center">No messages found</td></tr>`;
     });
 
-  // Listen for new messages via WebSocket
+  // Real-time updates
   socket.on('newMessage', addMessage);
 </script>
 </body>
