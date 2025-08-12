@@ -7,12 +7,16 @@ const mongoSanitize = require('express-mongo-sanitize');
 const session = require('express-session');
 const MongoStore = require('connect-mongo');
 const morgan = require('morgan');
+const http = require('http');
+const { Server } = require('socket.io');
 const connectDB = require('./config/db');
 const Message = require('./models/Message');
 const Admin = require('./models/Admin');
 const bcrypt = require('bcrypt');
 
 const app = express();
+const server = http.createServer(app); // For Socket.IO
+const io = new Server(server);
 const PORT = process.env.PORT || 4000;
 
 (async () => {
@@ -53,7 +57,7 @@ app.use(
     resave: false,
     saveUninitialized: false,
     store: MongoStore.create({ mongoUrl: process.env.MONGO_URI, collectionName: 'sessions' }),
-    cookie: { maxAge: 1000 * 60 * 60 * 24 }
+    cookie: { maxAge: 1000 * 60 * 60 * 24 } // 1 day login
   })
 );
 
@@ -86,6 +90,14 @@ app.post('/api/messages', messagesLimiter, checkApiKey, async (req, res) => {
       sender,
       message,
       timestamp: timestamp ? new Date(timestamp) : undefined
+    });
+
+    // Emit new message to all connected dashboard clients
+    io.emit('newMessage', {
+      _id: msg._id,
+      sender: msg.sender,
+      message: msg.message,
+      createdAt: msg.createdAt
     });
 
     res.status(201).json({ ok: true, id: msg._id });
@@ -126,34 +138,21 @@ function requireAdmin(req, res, next) {
 
 // Dashboard
 app.get('/admin/dashboard', requireAdmin, async (req, res) => {
-  const page = Math.max(1, parseInt(req.query.page || '1'));
-  const limit = Math.min(100, parseInt(req.query.limit || '50'));
-  const skip = (page - 1) * limit;
-
-  const [messages, total] = await Promise.all([
-    Message.find().sort({ createdAt: -1 }).skip(skip).limit(limit).lean(),
-    Message.countDocuments()
-  ]);
-
-  res.render('dashboard', {
-    messages,
-    page,
-    pages: Math.ceil(total / limit),
-    total
-  });
+  const messages = await Message.find().sort({ createdAt: -1 }).limit(50).lean();
+  res.render('dashboard', { messages });
 });
 
-// Get latest messages for polling
-app.get('/admin/messages/latest', requireAdmin, async (req, res) => {
+// JSON endpoint for auto-refresh
+app.get('/admin/messages-json', requireAdmin, async (req, res) => {
   try {
     const messages = await Message.find().sort({ createdAt: -1 }).limit(50).lean();
-    res.json({ ok: true, messages });
+    res.json(messages);
   } catch (err) {
-    res.status(500).json({ ok: false });
+    res.status(500).json({ error: 'Failed to fetch messages' });
   }
 });
 
-// Simple form delete (POST)
+// Delete message
 app.post('/admin/messages/:id/delete', requireAdmin, async (req, res) => {
   try {
     await Message.findByIdAndDelete(req.params.id);
@@ -167,6 +166,11 @@ app.post('/admin/messages/:id/delete', requireAdmin, async (req, res) => {
 // Root redirect
 app.get('/', (req, res) => res.redirect('/admin/login'));
 
-app.listen(PORT, () => {
+// Socket.IO connection
+io.on('connection', (socket) => {
+  console.log('A dashboard connected');
+});
+
+server.listen(PORT, () => {
   console.log(`Server started on http://localhost:${PORT}`);
 });
