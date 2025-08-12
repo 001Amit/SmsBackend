@@ -1,64 +1,84 @@
-<%- include('partials/header') %>
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Admin Dashboard</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet" />
+</head>
+<body>
+  <div class="container mt-5">
+    <h1 class="mb-4">Admin Dashboard</h1>
+    <a href="/admin/logout" class="btn btn-danger mb-3">Logout</a>
 
-<h3>Messages (Total: <%= total %>)</h3>
+    <table class="table table-striped">
+      <thead>
+        <tr>
+          <th>Sender</th>
+          <th>Message</th>
+          <th>Received At</th>
+          <th>Actions</th>
+        </tr>
+      </thead>
+      <tbody id="messagesBody">
+        <% if (messages && messages.length > 0) { %>
+          <% messages.forEach(function(msg) { %>
+            <tr>
+              <td><%= msg.sender %></td>
+              <td><pre style="white-space: pre-wrap; margin:0;"><%= msg.message %></pre></td>
+              <td><%= new Date(msg.createdAt).toLocaleString() %></td>
+              <td>
+                <form action="/admin/messages/<%= msg._id %>/delete" method="POST" onsubmit="return confirm('Delete this message?');">
+                  <button type="submit" class="btn btn-sm btn-danger">Delete</button>
+                </form>
+              </td>
+            </tr>
+          <% }) %>
+        <% } else { %>
+          <tr>
+            <td colspan="4" class="text-center">No messages found</td>
+          </tr>
+        <% } %>
+      </tbody>
+    </table>
+  </div>
 
-<table class="table table-striped table-bordered" id="messagesTable">
-  <thead>
-    <tr>
-      <th>Received At</th>
-      <th>Sender</th>
-      <th>Message</th>
-      <th>Actions</th>
-    </tr>
-  </thead>
-  <tbody>
-    <% messages.forEach(function(m) { %>
-      <tr data-id="<%= m._id %>">
-        <td><%= new Date(m.createdAt).toLocaleString() %></td>
-        <td><%= m.sender %></td>
-        <td><pre style="white-space:pre-wrap; margin:0;"><%= m.message %></pre></td>
-        <td>
-          <button class="btn btn-danger btn-sm delete-btn">Delete</button>
-        </td>
-      </tr>
-    <% }) %>
-  </tbody>
-</table>
+  <script>
+    async function fetchLatestMessages() {
+      try {
+        const res = await fetch('/admin/messages/latest');
+        const data = await res.json();
+        if (!data.ok) return;
 
-<nav>
-  <ul class="pagination">
-    <% for(let p=1; p<=pages; p++){ %>
-      <li class="page-item <%= p===page ? 'active' : '' %>">
-        <a class="page-link" href="/admin/dashboard?page=<%= p %>&limit=50"><%= p %></a>
-      </li>
-    <% } %>
-  </ul>
-</nav>
+        const tbody = document.getElementById('messagesBody');
+        tbody.innerHTML = '';
 
-<script>
-document.addEventListener('DOMContentLoaded', function () {
-  document.querySelectorAll('.delete-btn').forEach(function (btn) {
-    btn.addEventListener('click', function () {
-      if (!confirm('Are you sure you want to delete this message?')) return;
-
-      const row = btn.closest('tr');
-      const id = row.getAttribute('data-id');
-
-      fetch(`/admin/messages/${id}`, { // ✅ Fixed path
-        method: 'DELETE',
-      })
-      .then(res => res.json())
-      .then(data => {
-        if (data.ok) { // ✅ matches backend response
-          row.remove();
-        } else {
-          alert('Failed to delete message.');
+        if (data.messages.length === 0) {
+          tbody.innerHTML = '<tr><td colspan="4" class="text-center">No messages found</td></tr>';
+          return;
         }
-      })
-      .catch(() => alert('Server error while deleting.'));
-    });
-  });
-});
-</script>
 
-<%- include('partials/footer') %>
+        data.messages.forEach(msg => {
+          const row = document.createElement('tr');
+          row.innerHTML = `
+            <td>${msg.sender}</td>
+            <td><pre style="white-space: pre-wrap; margin:0;">${msg.message}</pre></td>
+            <td>${new Date(msg.createdAt).toLocaleString()}</td>
+            <td>
+              <form action="/admin/messages/${msg._id}/delete" method="POST" onsubmit="return confirm('Delete this message?');">
+                <button type="submit" class="btn btn-sm btn-danger">Delete</button>
+              </form>
+            </td>
+          `;
+          tbody.appendChild(row);
+        });
+      } catch (e) {
+        console.error('Error fetching messages:', e);
+      }
+    }
+
+    // Poll every 5 seconds
+    setInterval(fetchLatestMessages, 5000);
+  </script>
+</body>
+</html>
