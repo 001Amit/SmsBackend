@@ -19,11 +19,10 @@ const server = http.createServer(app);
 const io = new Server(server);
 const PORT = process.env.PORT || 4000;
 
+// Connect DB + Create Admin if missing
 (async () => {
   try {
     await connectDB(process.env.MONGO_URI);
-
-    // Create admin from ENV if not exists
     const username = process.env.ADMIN_USERNAME;
     const password = process.env.ADMIN_PASSWORD;
     if (username && password) {
@@ -56,13 +55,13 @@ app.use(session({
   resave: false,
   saveUninitialized: false,
   store: MongoStore.create({ mongoUrl: process.env.MONGO_URI, collectionName: 'sessions' }),
-  cookie: { maxAge: 1000 * 60 * 60 * 24 } // 1 day
+  cookie: { maxAge: 1000 * 60 * 60 * 24 } // 1 day login session
 }));
 
-// Rate limit for API
+// Rate limit
 const messagesLimiter = rateLimit({
   windowMs: 60 * 1000,
-  max: 120,
+  max: 300, // allow more since multiple devices may send
   standardHeaders: true,
   legacyHeaders: false
 });
@@ -76,10 +75,10 @@ function checkApiKey(req, res, next) {
   next();
 }
 
-// API endpoint for receiving messages
+// Receive messages from devices
 app.post('/api/messages', messagesLimiter, checkApiKey, async (req, res) => {
   try {
-    const { sender, message, timestamp } = req.body;
+    const { sender, message, timestamp, deviceId } = req.body;
     if (!sender || !message) {
       return res.status(400).json({ error: 'sender and message required' });
     }
@@ -87,10 +86,11 @@ app.post('/api/messages', messagesLimiter, checkApiKey, async (req, res) => {
     const msg = await Message.create({
       sender,
       message,
+      deviceId: deviceId || 'unknown',
       timestamp: timestamp ? new Date(timestamp) : undefined
     });
 
-    // Emit to dashboard in real time
+    // Send real-time update to all connected dashboards
     io.emit('newMessage', {
       _id: msg._id,
       sender: msg.sender,
@@ -105,48 +105,36 @@ app.post('/api/messages', messagesLimiter, checkApiKey, async (req, res) => {
   }
 });
 
-// Admin login/logout routes
+// Admin auth
 app.get('/admin/login', (req, res) => res.render('login', { error: null }));
-
 app.post('/admin/login', async (req, res) => {
   const { username, password } = req.body;
   const admin = await Admin.findOne({ username });
   if (!admin) return res.render('login', { error: 'Invalid credentials' });
-
   const ok = await bcrypt.compare(password, admin.passwordHash);
   if (!ok) return res.render('login', { error: 'Invalid credentials' });
-
   req.session.adminId = admin._id;
   res.redirect('/admin/dashboard');
 });
-
-app.get('/admin/logout', (req, res) => {
-  req.session.destroy(() => res.redirect('/admin/login'));
-});
-
-// Auth middleware
+app.get('/admin/logout', (req, res) => req.session.destroy(() => res.redirect('/admin/login')));
 function requireAdmin(req, res, next) {
   if (!req.session?.adminId) return res.redirect('/admin/login');
   next();
 }
 
-// Dashboard view
+// Dashboard
 app.get('/admin/dashboard', requireAdmin, async (req, res) => {
   const messages = await Message.find().sort({ createdAt: -1 }).limit(50).lean();
   res.render('dashboard', { messages });
 });
-
-// JSON endpoint for table refresh
 app.get('/admin/messages-json', requireAdmin, async (req, res) => {
   try {
     const messages = await Message.find().sort({ createdAt: -1 }).limit(50).lean();
     res.json(messages);
-  } catch (err) {
+  } catch {
     res.status(500).json({ error: 'Failed to fetch messages' });
   }
 });
-
-// Delete a message
 app.post('/admin/messages/:id/delete', requireAdmin, async (req, res) => {
   try {
     await Message.findByIdAndDelete(req.params.id);
@@ -157,10 +145,9 @@ app.post('/admin/messages/:id/delete', requireAdmin, async (req, res) => {
   }
 });
 
-// Root
 app.get('/', (req, res) => res.redirect('/admin/login'));
 
-// Socket.IO connection logging
+// WebSocket connection
 io.on('connection', () => console.log('📡 Dashboard connected'));
 
 server.listen(PORT, () => console.log(`🚀 Server running on http://localhost:${PORT}`));
