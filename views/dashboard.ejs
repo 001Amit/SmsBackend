@@ -16,9 +16,11 @@
       align-items: center;
       flex-wrap: wrap;
     }
-    .table td pre {
-      white-space: pre-wrap;
-      margin: 0;
+    /* Force long messages to stay in one row but wrap nicely inside the cell */
+    .table td.message-cell {
+      white-space: pre-wrap; 
+      word-break: break-word;
+      max-width: 500px;
       font-size: 0.95rem;
     }
   </style>
@@ -48,7 +50,7 @@
               <% messages.forEach(function(msg) { %>
                 <tr data-id="<%= msg._id %>">
                   <td><%= msg.sender %></td>
-                  <td><pre><%= msg.message %></pre></td>
+                  <td class="message-cell"><%= msg.message %></td>
                   <td><%= new Date(msg.createdAt).toLocaleString() %></td>
                   <td>
                     <form action="/admin/messages/<%= msg._id %>/delete" method="POST" onsubmit="return confirm('Delete this message?');">
@@ -72,12 +74,11 @@
   const socket = io();
   const tbody = document.getElementById('messagesBody');
 
-  // Render a single row
   function renderRow(msg) {
     return `
       <tr data-id="${msg._id}">
         <td>${msg.sender}</td>
-        <td><pre>${msg.message}</pre></td>
+        <td class="message-cell">${msg.message}</td>
         <td>${new Date(msg.createdAt).toLocaleString()}</td>
         <td>
           <form action="/admin/messages/${msg._id}/delete" method="POST" onsubmit="return confirm('Delete this message?');">
@@ -88,33 +89,23 @@
     `;
   }
 
-  // Add new message to table
   function addMessage(msg) {
-    const existing = tbody.querySelector(`[data-id="${msg._id}"]`);
-    if (!existing) {
+    if (!tbody.querySelector(`[data-id="${msg._id}"]`)) {
       tbody.insertAdjacentHTML('afterbegin', renderRow(msg));
     }
   }
 
-  // Fetch all messages
-  function fetchMessages() {
-    fetch('/admin/messages-json')
-      .then(res => res.json())
-      .then(data => {
-        tbody.innerHTML = data.length
-          ? data.map(renderRow).join('')
-          : `<tr><td colspan="4" class="text-center">No messages found</td></tr>`;
-      })
-      .catch(err => console.error(err));
-  }
+  // Initial fetch
+  fetch('/admin/messages-json')
+    .then(res => res.json())
+    .then(data => {
+      tbody.innerHTML = data.length
+        ? data.map(renderRow).join('')
+        : `<tr><td colspan="4" class="text-center">No messages found</td></tr>`;
+    });
 
-  // Listen for real-time new messages
-  socket.on('newMessage', msg => {
-    addMessage(msg);
-  });
-
-  // Initial load
-  fetchMessages();
+  // Listen for new messages via WebSocket
+  socket.on('newMessage', addMessage);
 </script>
 </body>
 </html>
