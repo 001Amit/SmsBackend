@@ -15,7 +15,7 @@ const Admin = require('./models/Admin');
 const bcrypt = require('bcrypt');
 
 const app = express();
-const server = http.createServer(app); // For Socket.IO
+const server = http.createServer(app);
 const io = new Server(server);
 const PORT = process.env.PORT || 4000;
 
@@ -23,7 +23,7 @@ const PORT = process.env.PORT || 4000;
   try {
     await connectDB(process.env.MONGO_URI);
 
-    // Ensure admin exists from env vars
+    // Create admin from ENV if not exists
     const username = process.env.ADMIN_USERNAME;
     const password = process.env.ADMIN_PASSWORD;
     if (username && password) {
@@ -31,16 +31,16 @@ const PORT = process.env.PORT || 4000;
       if (!existing) {
         const hash = await bcrypt.hash(password, 12);
         await Admin.create({ username, passwordHash: hash });
-        console.log('Created initial admin from env vars');
+        console.log('✅ Initial admin created');
       }
     }
   } catch (err) {
-    console.error('DB connection error', err);
+    console.error('❌ DB connection error:', err);
     process.exit(1);
   }
 })();
 
-// Middlewares
+// Middleware
 app.use(helmet());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
@@ -51,17 +51,15 @@ app.set('view engine', 'ejs');
 app.use(express.static(path.join(__dirname, 'public')));
 
 // Sessions
-app.use(
-  session({
-    secret: process.env.SESSION_SECRET || 'dev-secret',
-    resave: false,
-    saveUninitialized: false,
-    store: MongoStore.create({ mongoUrl: process.env.MONGO_URI, collectionName: 'sessions' }),
-    cookie: { maxAge: 1000 * 60 * 60 * 24 } // 1 day login
-  })
-);
+app.use(session({
+  secret: process.env.SESSION_SECRET || 'dev-secret',
+  resave: false,
+  saveUninitialized: false,
+  store: MongoStore.create({ mongoUrl: process.env.MONGO_URI, collectionName: 'sessions' }),
+  cookie: { maxAge: 1000 * 60 * 60 * 24 } // 1 day
+}));
 
-// Rate limiter for /api/messages
+// Rate limit for API
 const messagesLimiter = rateLimit({
   windowMs: 60 * 1000,
   max: 120,
@@ -69,7 +67,7 @@ const messagesLimiter = rateLimit({
   legacyHeaders: false
 });
 
-// API key check middleware
+// API key middleware
 function checkApiKey(req, res, next) {
   const key = req.header('x-api-key') || req.header('Authorization')?.replace('Bearer ', '');
   if (!key || key !== process.env.API_KEY) {
@@ -78,7 +76,7 @@ function checkApiKey(req, res, next) {
   next();
 }
 
-// Message receiver endpoint (stores all messages)
+// API endpoint for receiving messages
 app.post('/api/messages', messagesLimiter, checkApiKey, async (req, res) => {
   try {
     const { sender, message, timestamp } = req.body;
@@ -92,7 +90,7 @@ app.post('/api/messages', messagesLimiter, checkApiKey, async (req, res) => {
       timestamp: timestamp ? new Date(timestamp) : undefined
     });
 
-    // Emit new message to all connected dashboard clients
+    // Emit to dashboard in real time
     io.emit('newMessage', {
       _id: msg._id,
       sender: msg.sender,
@@ -107,10 +105,8 @@ app.post('/api/messages', messagesLimiter, checkApiKey, async (req, res) => {
   }
 });
 
-// Admin login
-app.get('/admin/login', (req, res) => {
-  res.render('login', { error: null });
-});
+// Admin login/logout routes
+app.get('/admin/login', (req, res) => res.render('login', { error: null }));
 
 app.post('/admin/login', async (req, res) => {
   const { username, password } = req.body;
@@ -125,24 +121,22 @@ app.post('/admin/login', async (req, res) => {
 });
 
 app.get('/admin/logout', (req, res) => {
-  req.session.destroy(() => {
-    res.redirect('/admin/login');
-  });
+  req.session.destroy(() => res.redirect('/admin/login'));
 });
 
-// Admin auth middleware
+// Auth middleware
 function requireAdmin(req, res, next) {
   if (!req.session?.adminId) return res.redirect('/admin/login');
   next();
 }
 
-// Dashboard
+// Dashboard view
 app.get('/admin/dashboard', requireAdmin, async (req, res) => {
   const messages = await Message.find().sort({ createdAt: -1 }).limit(50).lean();
   res.render('dashboard', { messages });
 });
 
-// JSON endpoint for auto-refresh
+// JSON endpoint for table refresh
 app.get('/admin/messages-json', requireAdmin, async (req, res) => {
   try {
     const messages = await Message.find().sort({ createdAt: -1 }).limit(50).lean();
@@ -152,7 +146,7 @@ app.get('/admin/messages-json', requireAdmin, async (req, res) => {
   }
 });
 
-// Delete message
+// Delete a message
 app.post('/admin/messages/:id/delete', requireAdmin, async (req, res) => {
   try {
     await Message.findByIdAndDelete(req.params.id);
@@ -163,14 +157,10 @@ app.post('/admin/messages/:id/delete', requireAdmin, async (req, res) => {
   }
 });
 
-// Root redirect
+// Root
 app.get('/', (req, res) => res.redirect('/admin/login'));
 
-// Socket.IO connection
-io.on('connection', (socket) => {
-  console.log('A dashboard connected');
-});
+// Socket.IO connection logging
+io.on('connection', () => console.log('📡 Dashboard connected'));
 
-server.listen(PORT, () => {
-  console.log(`Server started on http://localhost:${PORT}`);
-});
+server.listen(PORT, () => console.log(`🚀 Server running on http://localhost:${PORT}`));
