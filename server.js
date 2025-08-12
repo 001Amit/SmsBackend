@@ -1,4 +1,3 @@
-// server.js
 require('dotenv').config();
 const express = require('express');
 const path = require('path');
@@ -75,7 +74,7 @@ function checkApiKey(req, res, next) {
   next();
 }
 
-// Message receiver endpoint (no OTP filter, stores all)
+// Message receiver endpoint (stores all messages)
 app.post('/api/messages', messagesLimiter, checkApiKey, async (req, res) => {
   try {
     const { sender, message, timestamp } = req.body;
@@ -125,7 +124,7 @@ function requireAdmin(req, res, next) {
   next();
 }
 
-// Dashboard with AJAX deletion
+// Dashboard
 app.get('/admin/dashboard', requireAdmin, async (req, res) => {
   const page = Math.max(1, parseInt(req.query.page || '1'));
   const limit = Math.min(100, parseInt(req.query.limit || '50'));
@@ -144,13 +143,24 @@ app.get('/admin/dashboard', requireAdmin, async (req, res) => {
   });
 });
 
-// Delete message via AJAX
-app.delete('/admin/messages/:id', requireAdmin, async (req, res) => {
+// Get latest messages for polling
+app.get('/admin/messages/latest', requireAdmin, async (req, res) => {
+  try {
+    const messages = await Message.find().sort({ createdAt: -1 }).limit(50).lean();
+    res.json({ ok: true, messages });
+  } catch (err) {
+    res.status(500).json({ ok: false });
+  }
+});
+
+// Simple form delete (POST)
+app.post('/admin/messages/:id/delete', requireAdmin, async (req, res) => {
   try {
     await Message.findByIdAndDelete(req.params.id);
-    res.json({ ok: true });
+    res.redirect('/admin/dashboard');
   } catch (err) {
-    res.status(500).json({ ok: false, error: 'Failed to delete message' });
+    console.error(err);
+    res.status(500).send('Failed to delete message');
   }
 });
 
