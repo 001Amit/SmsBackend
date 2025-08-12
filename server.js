@@ -75,7 +75,7 @@ function checkApiKey(req, res, next) {
   next();
 }
 
-// Message receiver endpoint (stores all messages)
+// Message receiver endpoint (no OTP filter, stores all)
 app.post('/api/messages', messagesLimiter, checkApiKey, async (req, res) => {
   try {
     const { sender, message, timestamp } = req.body;
@@ -125,7 +125,7 @@ function requireAdmin(req, res, next) {
   next();
 }
 
-// Dashboard
+// Dashboard with AJAX deletion
 app.get('/admin/dashboard', requireAdmin, async (req, res) => {
   const page = Math.max(1, parseInt(req.query.page || '1'));
   const limit = Math.min(100, parseInt(req.query.limit || '50'));
@@ -144,8 +144,8 @@ app.get('/admin/dashboard', requireAdmin, async (req, res) => {
   });
 });
 
-// Delete message via AJAX (support both routes)
-app.delete(['/admin/messages/:id', '/admin/api/messages/:id'], requireAdmin, async (req, res) => {
+// Delete message via AJAX
+app.delete('/admin/messages/:id', requireAdmin, async (req, res) => {
   try {
     await Message.findByIdAndDelete(req.params.id);
     res.json({ ok: true });
