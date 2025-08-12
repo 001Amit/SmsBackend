@@ -1,0 +1,38 @@
+<%- include('partials/header') %>
+
+<h3>Messages (Total: <%= total %>)</h3>
+
+<table class="table table-striped table-bordered">
+  <thead>
+    <tr>
+      <th>Received At</th>
+      <th>Sender</th>
+      <th>Message</th>
+      <th>SIM1</th>
+      <th>SIM2</th>
+    </tr>
+  </thead>
+  <tbody>
+    <% messages.forEach(function(m) { %>
+      <tr>
+        <td><%= new Date(m.createdAt).toLocaleString() %></td>
+        <td><%= m.sender %></td>
+        <td><pre style="white-space:pre-wrap; margin:0;"><%= m.message %></pre></td>
+        <td><%= m.deviceSim1 || '' %></td>
+        <td><%= m.deviceSim2 || '' %></td>
+      </tr>
+    <% }) %>
+  </tbody>
+</table>
+
+<nav>
+  <ul class="pagination">
+    <% for(let p=1;p<=pages;p++){ %>
+      <li class="page-item <%= p===page ? 'active' : '' %>">
+        <a class="page-link" href="/admin/dashboard?page=<%= p %>&limit=50"><%= p %></a>
+      </li>
+    <% } %>
+  </ul>
+</nav>
+
+<%- include('partials/footer') %>
