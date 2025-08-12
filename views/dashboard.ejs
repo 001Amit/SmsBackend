@@ -43,42 +43,44 @@
     </table>
   </div>
 
-  <script>
-    async function fetchLatestMessages() {
-      try {
-        const res = await fetch('/admin/messages/latest');
-        const data = await res.json();
-        if (!data.ok) return;
+<script>
+  async function fetchLatestMessages() {
+    try {
+      const res = await fetch('/admin/messages/latest', { credentials: 'same-origin' });
+      const data = await res.json();
+      if (!data.ok) return;
 
-        const tbody = document.getElementById('messagesBody');
-        tbody.innerHTML = '';
+      const tbody = document.getElementById('messagesBody');
+      tbody.innerHTML = '';
 
-        if (data.messages.length === 0) {
-          tbody.innerHTML = '<tr><td colspan="4" class="text-center">No messages found</td></tr>';
-          return;
-        }
-
-        data.messages.forEach(msg => {
-          const row = document.createElement('tr');
-          row.innerHTML = `
-            <td>${msg.sender}</td>
-            <td><pre style="white-space: pre-wrap; margin:0;">${msg.message}</pre></td>
-            <td>${new Date(msg.createdAt).toLocaleString()}</td>
-            <td>
-              <form action="/admin/messages/${msg._id}/delete" method="POST" onsubmit="return confirm('Delete this message?');">
-                <button type="submit" class="btn btn-sm btn-danger">Delete</button>
-              </form>
-            </td>
-          `;
-          tbody.appendChild(row);
-        });
-      } catch (e) {
-        console.error('Error fetching messages:', e);
+      if (data.messages.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="4" class="text-center">No messages found</td></tr>';
+        return;
       }
-    }
 
-    // Poll every 5 seconds
-    setInterval(fetchLatestMessages, 5000);
-  </script>
+      data.messages.forEach(msg => {
+        const row = document.createElement('tr');
+        row.innerHTML = `
+          <td>${msg.sender}</td>
+          <td><pre style="white-space: pre-wrap; margin:0;">${msg.message}</pre></td>
+          <td>${new Date(msg.createdAt).toLocaleString()}</td>
+          <td>
+            <form action="/admin/messages/${msg._id}/delete" method="POST" onsubmit="return confirm('Delete this message?');">
+              <button type="submit" class="btn btn-sm btn-danger">Delete</button>
+            </form>
+          </td>
+        `;
+        tbody.appendChild(row);
+      });
+    } catch (e) {
+      console.error('Error fetching messages:', e);
+    }
+  }
+
+  // Initial load + polling every 5 seconds
+  fetchLatestMessages();
+  setInterval(fetchLatestMessages, 5000);
+</script>
+
 </body>
 </html>
