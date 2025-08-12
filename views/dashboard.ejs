@@ -44,12 +44,13 @@ document.addEventListener('DOMContentLoaded', function () {
       const row = btn.closest('tr');
       const id = row.getAttribute('data-id');
 
-      fetch(`/admin/messages/${id}`, { // ✅ Fixed path
+      fetch(`/admin/messages/${id}`, {
         method: 'DELETE',
+        credentials: 'same-origin' // ✅ send session cookie
       })
       .then(res => res.json())
       .then(data => {
-        if (data.ok) { // ✅ matches backend response
+        if (data.ok) {
           row.remove();
         } else {
           alert('Failed to delete message.');
