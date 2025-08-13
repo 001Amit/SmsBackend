@@ -19,6 +19,9 @@ const server = http.createServer(app);
 const io = new Server(server);
 const PORT = process.env.PORT || 4000;
 
+// Constants
+const PAGE_SIZE = 50;
+
 // Connect to DB and ensure admin exists
 (async () => {
   try {
@@ -126,10 +129,33 @@ function requireAdmin(req, res, next) {
   next();
 }
 
-// Dashboard
+// Dashboard with pagination
 app.get('/admin/dashboard', requireAdmin, async (req, res) => {
-  const messages = await Message.find().sort({ createdAt: -1 }).limit(50).lean();
-  res.render('dashboard', { messages });
+  const page = parseInt(req.query.page) || 1;
+  if (page < 1) return res.redirect('/admin/dashboard?page=1');
+
+  try {
+    const totalMessages = await Message.countDocuments();
+    const totalPages = Math.ceil(totalMessages / PAGE_SIZE);
+
+    // Clamp page number
+    const currentPage = Math.min(page, totalPages || 1);
+
+    const messages = await Message.find()
+      .sort({ createdAt: -1 })
+      .skip((currentPage - 1) * PAGE_SIZE)
+      .limit(PAGE_SIZE)
+      .lean();
+
+    res.render('dashboard', {
+      messages,
+      currentPage,
+      totalPages
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).send('Server error');
+  }
 });
 
 app.get('/admin/messages-json', requireAdmin, async (req, res) => {
