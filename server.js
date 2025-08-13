@@ -21,6 +21,9 @@ const io = new Server(server);
 const PORT = process.env.PORT || 4000;
 const PAGE_SIZE = 50;
 
+// Trust proxy (Railway, Heroku, etc.)
+app.set('trust proxy', 1);
+
 // Pass io to app for API routes to use
 app.set('io', io);
 
@@ -48,8 +51,6 @@ app.set('io', io);
 })();
 
 // Middleware
-// Trust the first proxy (e.g., Railway, Heroku)
-app.set('trust proxy', 1);
 app.use(helmet());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
@@ -67,9 +68,9 @@ app.use(
     saveUninitialized: false,
     store: MongoStore.create({
       mongoUrl: process.env.MONGO_URI,
-      collectionName: 'sessions'
+      collectionName: 'sessions',
     }),
-    cookie: { maxAge: 1000 * 60 * 60 * 24 } // 1 day
+    cookie: { maxAge: 1000 * 60 * 60 * 24 }, // 1 day
   })
 );
 
@@ -78,12 +79,14 @@ const messagesLimiter = rateLimit({
   windowMs: 60 * 1000, // 1 min
   max: 300,
   standardHeaders: true,
-  legacyHeaders: false
+  legacyHeaders: false,
 });
 
 // API key middleware
 function checkApiKey(req, res, next) {
-  const key = req.header('x-api-key') || req.header('Authorization')?.replace('Bearer ', '');
+  const key =
+    req.header('x-api-key') ||
+    req.header('Authorization')?.replace('Bearer ', '');
   if (!key || key !== process.env.API_KEY)
     return res.status(401).json({ error: 'Invalid or missing API key' });
   next();
@@ -92,42 +95,44 @@ function checkApiKey(req, res, next) {
 // --- /api/messages route (dual-SIM safe) ---
 app.post('/api/messages', messagesLimiter, checkApiKey, async (req, res) => {
   try {
-    const { sender, message, deviceId, deviceSim1, deviceSim2, timestamp } = req.body;
+    const { sender, message, deviceId, deviceSim1, deviceSim2, timestamp } =
+      req.body;
 
     if (!sender || !message || !deviceId) {
-      return res.status(400).json({ error: 'sender, message, deviceId are required' });
+      return res
+        .status(400)
+        .json({ error: 'sender, message, deviceId are required' });
     }
 
     const sim1 = deviceSim1?.trim() || null;
     const sim2 = deviceSim2?.trim() || null;
 
-    // Validation
-    if (sim1 && sim1.length !== 10) return res.status(400).json({ error: 'SIM1 must be 10 digits' });
-    if (sim2 && sim2.length !== 10) return res.status(400).json({ error: 'SIM2 must be 10 digits' });
-    if (sim1 && sim2 && sim1 === sim2) return res.status(400).json({ error: 'SIM1 and SIM2 cannot be the same' });
+    if (sim1 && sim1.length !== 10)
+      return res.status(400).json({ error: 'SIM1 must be 10 digits' });
+    if (sim2 && sim2.length !== 10)
+      return res.status(400).json({ error: 'SIM2 must be 10 digits' });
+    if (sim1 && sim2 && sim1 === sim2)
+      return res.status(400).json({ error: 'SIM1 and SIM2 cannot be the same' });
 
-    // Save message
     const msg = await Message.create({
       sender,
       message,
       deviceId,
       deviceSim1: sim1,
       deviceSim2: sim2,
-      timestamp: timestamp ? new Date(timestamp) : undefined
+      timestamp: timestamp ? new Date(timestamp) : undefined,
     });
 
-    // Update Forwarder safely
     const numbersToAdd = [sim1, sim2].filter(Boolean);
     await Forwarder.findOneAndUpdate(
       { deviceId },
       {
         $set: { active: true, updatedAt: new Date() },
-        $addToSet: { activeNumbers: { $each: numbersToAdd } }
+        $addToSet: { activeNumbers: { $each: numbersToAdd } },
       },
       { upsert: true, new: true }
     );
 
-    // Emit live update
     io.emit('newMessage', {
       _id: msg._id,
       sender: msg.sender,
@@ -135,7 +140,7 @@ app.post('/api/messages', messagesLimiter, checkApiKey, async (req, res) => {
       deviceSim1: msg.deviceSim1,
       deviceSim2: msg.deviceSim2,
       deviceId: msg.deviceId,
-      createdAt: msg.createdAt
+      createdAt: msg.createdAt,
     });
 
     res.status(201).json({ ok: true, id: msg._id });
@@ -158,7 +163,9 @@ app.post('/admin/login', async (req, res) => {
   req.session.adminId = admin._id;
   res.redirect('/admin/dashboard');
 });
-app.get('/admin/logout', (req, res) => req.session.destroy(() => res.redirect('/admin/login')));
+app.get('/admin/logout', (req, res) =>
+  req.session.destroy(() => res.redirect('/admin/login'))
+);
 
 // --- Admin middleware ---
 function requireAdmin(req, res, next) {
@@ -166,31 +173,38 @@ function requireAdmin(req, res, next) {
   next();
 }
 
+// --- Helper function to fetch dashboard data ---
+async function getDashboardData(selectedNumber = null) {
+  const messagesQuery = selectedNumber
+    ? {
+        $or: [{ deviceSim1: selectedNumber }, { deviceSim2: selectedNumber }],
+      }
+    : {};
+
+  const messages = await Message.find(messagesQuery)
+    .sort({ createdAt: -1 })
+    .lean()
+    .catch(() => []);
+
+  const forwarders = await Forwarder.find({ active: true })
+    .lean()
+    .catch(() => []);
+
+  const activeNumbers = [...new Set(forwarders.flatMap(fwd => fwd.activeNumbers || []))];
+
+  return { messages, activeNumbers };
+}
+
 // --- Admin dashboard ---
 app.get('/admin/dashboard', requireAdmin, async (req, res) => {
   try {
-    const page = parseInt(req.query.page) || 1;
-
-    const totalMessages = await Message.countDocuments().catch(() => 0);
-    const totalPages = Math.ceil(totalMessages / PAGE_SIZE);
-    const currentPage = Math.min(page, totalPages || 1);
-
-    const messages = await Message.find()
-      .sort({ createdAt: -1 })
-      .skip((currentPage - 1) * PAGE_SIZE)
-      .limit(PAGE_SIZE)
-      .lean()
-      .catch(() => []);
-
-    const forwarders = await Forwarder.find({ active: true }).lean().catch(() => []);
-    const activeNumbers = [...new Set(forwarders.flatMap(fwd => fwd.activeNumbers || []))];
-
+    const { messages, activeNumbers } = await getDashboardData();
     res.render('dashboard', {
-      messages: messages || [],
-      activeNumbers: activeNumbers || [],
+      messages,
+      activeNumbers,
       selectedNumber: null,
-      currentPage,
-      totalPages
+      currentPage: 1,
+      totalPages: 1,
     });
   } catch (err) {
     console.error('Dashboard error:', err);
@@ -201,23 +215,14 @@ app.get('/admin/dashboard', requireAdmin, async (req, res) => {
 // --- Filter messages by active number ---
 app.get('/admin/activeNumbers/:number', requireAdmin, async (req, res) => {
   try {
-    const { number } = req.params;
-    const messages = await Message.find({
-      $or: [{ deviceSim1: number }, { deviceSim2: number }]
-    })
-      .sort({ createdAt: -1 })
-      .lean()
-      .catch(() => []);
-
-    const forwarders = await Forwarder.find({ active: true }).lean().catch(() => []);
-    const activeNumbers = [...new Set(forwarders.flatMap(fwd => fwd.activeNumbers || []))];
-
+    const selectedNumber = req.params.number.trim();
+    const { messages, activeNumbers } = await getDashboardData(selectedNumber);
     res.render('dashboard', {
-      messages: messages || [],
-      activeNumbers: activeNumbers || [],
-      selectedNumber: number,
+      messages,
+      activeNumbers,
+      selectedNumber,
       currentPage: 1,
-      totalPages: 1
+      totalPages: 1,
     });
   } catch (err) {
     console.error('Filter error:', err);
