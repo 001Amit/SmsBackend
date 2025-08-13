@@ -1,10 +1,10 @@
 const mongoose = require('mongoose');
 
-const forwarderSchema = new mongoose.Schema({
+const ForwarderSchema = new mongoose.Schema({
   deviceId: { type: String, required: true, unique: true },
-  numbers: [String],
   active: { type: Boolean, default: true },
+  activeNumbers: { type: [String], default: [] }, // unique per device enforced via $addToSet
   updatedAt: { type: Date, default: Date.now }
 });
 
-module.exports = mongoose.model('Forwarder', forwarderSchema);
+module.exports = mongoose.model('Forwarder', ForwarderSchema);
