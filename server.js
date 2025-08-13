@@ -10,25 +10,29 @@ const morgan = require('morgan');
 const http = require('http');
 const { Server } = require('socket.io');
 const connectDB = require('./config/db');
+const Forwarder = require('./models/Forwarder');
 const Message = require('./models/Message');
 const Admin = require('./models/Admin');
-const Forwarder = require('./models/Forwarder');
 const bcrypt = require('bcrypt');
 
 const app = express();
 const server = http.createServer(app);
 const io = new Server(server);
 const PORT = process.env.PORT || 4000;
-
-// Constants
 const PAGE_SIZE = 50;
+
+// Pass io to app for API routes to use
+app.set('io', io);
 
 // Connect to DB and ensure admin exists
 (async () => {
   try {
     await connectDB(process.env.MONGO_URI);
+    console.log('✅ MongoDB Connected');
+
     const username = process.env.ADMIN_USERNAME;
     const password = process.env.ADMIN_PASSWORD;
+
     if (username && password) {
       const existing = await Admin.findOne({ username });
       if (!existing) {
@@ -54,17 +58,22 @@ app.set('view engine', 'ejs');
 app.use(express.static(path.join(__dirname, 'public')));
 
 // Sessions
-app.use(session({
-  secret: process.env.SESSION_SECRET || 'dev-secret',
-  resave: false,
-  saveUninitialized: false,
-  store: MongoStore.create({ mongoUrl: process.env.MONGO_URI, collectionName: 'sessions' }),
-  cookie: { maxAge: 1000 * 60 * 60 * 24 }
-}));
+app.use(
+  session({
+    secret: process.env.SESSION_SECRET || 'dev-secret',
+    resave: false,
+    saveUninitialized: false,
+    store: MongoStore.create({
+      mongoUrl: process.env.MONGO_URI,
+      collectionName: 'sessions'
+    }),
+    cookie: { maxAge: 1000 * 60 * 60 * 24 } // 1 day
+  })
+);
 
 // Rate limiting
 const messagesLimiter = rateLimit({
-  windowMs: 60 * 1000,
+  windowMs: 60 * 1000, // 1 min
   max: 300,
   standardHeaders: true,
   legacyHeaders: false
@@ -73,69 +82,93 @@ const messagesLimiter = rateLimit({
 // API key middleware
 function checkApiKey(req, res, next) {
   const key = req.header('x-api-key') || req.header('Authorization')?.replace('Bearer ', '');
-  if (!key || key !== process.env.API_KEY) return res.status(401).json({ error: 'Invalid or missing API key' });
+  if (!key || key !== process.env.API_KEY)
+    return res.status(401).json({ error: 'Invalid or missing API key' });
   next();
 }
 
-// Receive messages from devices
+// --- /api/messages route (dual-SIM safe) ---
 app.post('/api/messages', messagesLimiter, checkApiKey, async (req, res) => {
   try {
-    const { sender, message, timestamp, deviceId } = req.body;
-    if (!sender || !message || !deviceId) return res.status(400).json({ error: 'sender, message, and deviceId required' });
+    const { sender, message, deviceId, deviceSim1, deviceSim2, timestamp } = req.body;
 
+    if (!sender || !message || !deviceId) {
+      return res.status(400).json({ error: 'sender, message, deviceId are required' });
+    }
+
+    // Trim SIM numbers
+    const sim1 = deviceSim1?.trim() || null;
+    const sim2 = deviceSim2?.trim() || null;
+
+    // Validation
+    if (sim1 && sim1.length !== 10) return res.status(400).json({ error: 'SIM1 must be 10 digits' });
+    if (sim2 && sim2.length !== 10) return res.status(400).json({ error: 'SIM2 must be 10 digits' });
+    if (sim1 && sim2 && sim1 === sim2) return res.status(400).json({ error: 'SIM1 and SIM2 cannot be the same' });
+
+    // Save message
     const msg = await Message.create({
       sender,
       message,
       deviceId,
+      deviceSim1: sim1,
+      deviceSim2: sim2,
       timestamp: timestamp ? new Date(timestamp) : undefined
     });
 
-    // Register or update forwarder
+    // Update Forwarder safely
+    const numbersToAdd = [sim1, sim2].filter(Boolean);
     await Forwarder.findOneAndUpdate(
       { deviceId },
-      { $set: { active: true, updatedAt: new Date() }, $addToSet: { numbers: sender } },
-      { upsert: true }
+      {
+        $set: { active: true, updatedAt: new Date() },
+        $addToSet: { activeNumbers: { $each: numbersToAdd } }
+      },
+      { upsert: true, new: true }
     );
 
+    // Emit live update
     io.emit('newMessage', {
       _id: msg._id,
       sender: msg.sender,
       message: msg.message,
+      deviceSim1: msg.deviceSim1,
+      deviceSim2: msg.deviceSim2,
       deviceId: msg.deviceId,
       createdAt: msg.createdAt
     });
 
     res.status(201).json({ ok: true, id: msg._id });
   } catch (err) {
-    console.error(err);
+    console.error('Error in /api/messages:', err);
     res.status(500).json({ error: 'server error' });
   }
 });
 
-// Admin auth
+// --- Admin authentication ---
 app.get('/admin/login', (req, res) => res.render('login', { error: null }));
 app.post('/admin/login', async (req, res) => {
   const { username, password } = req.body;
   const admin = await Admin.findOne({ username });
   if (!admin) return res.render('login', { error: 'Invalid credentials' });
+
   const ok = await bcrypt.compare(password, admin.passwordHash);
   if (!ok) return res.render('login', { error: 'Invalid credentials' });
+
   req.session.adminId = admin._id;
   res.redirect('/admin/dashboard');
 });
 app.get('/admin/logout', (req, res) => req.session.destroy(() => res.redirect('/admin/login')));
 
+// --- Admin middleware ---
 function requireAdmin(req, res, next) {
   if (!req.session?.adminId) return res.redirect('/admin/login');
   next();
 }
 
-// Dashboard: all messages + active forwarders
+// --- Admin dashboard ---
 app.get('/admin/dashboard', requireAdmin, async (req, res) => {
   try {
     const page = parseInt(req.query.page) || 1;
-    if (page < 1) return res.redirect('/admin/dashboard?page=1');
-
     const totalMessages = await Message.countDocuments();
     const totalPages = Math.ceil(totalMessages / PAGE_SIZE);
     const currentPage = Math.min(page, totalPages || 1);
@@ -147,11 +180,12 @@ app.get('/admin/dashboard', requireAdmin, async (req, res) => {
       .lean();
 
     const forwarders = await Forwarder.find({ active: true }).lean();
+    const activeNumbers = forwarders.flatMap(fwd => fwd.activeNumbers);
 
     res.render('dashboard', {
       messages,
-      forwarders,
-      selectedForwarder: null,
+      activeNumbers,
+      selectedNumber: null,
       currentPage,
       totalPages
     });
@@ -161,18 +195,23 @@ app.get('/admin/dashboard', requireAdmin, async (req, res) => {
   }
 });
 
-// View messages for a specific forwarder
-app.get('/admin/forwarders/:deviceId', requireAdmin, async (req, res) => {
+// --- Filter messages by active number ---
+app.get('/admin/activeNumbers/:number', requireAdmin, async (req, res) => {
   try {
-    const { deviceId } = req.params;
-    const messages = await Message.find({ deviceId }).sort({ createdAt: -1 }).lean();
+    const { number } = req.params;
+    const messages = await Message.find({
+      $or: [{ deviceSim1: number }, { deviceSim2: number }]
+    })
+      .sort({ createdAt: -1 })
+      .lean();
+
     const forwarders = await Forwarder.find({ active: true }).lean();
-    const selectedForwarder = await Forwarder.findOne({ deviceId }).lean();
+    const activeNumbers = forwarders.flatMap(fwd => fwd.activeNumbers);
 
     res.render('dashboard', {
       messages,
-      forwarders,
-      selectedForwarder,
+      activeNumbers,
+      selectedNumber: number,
       currentPage: 1,
       totalPages: 1
     });
@@ -182,30 +221,7 @@ app.get('/admin/forwarders/:deviceId', requireAdmin, async (req, res) => {
   }
 });
 
-// Stop a forwarder
-app.post('/api/forwarders/stop', checkApiKey, async (req, res) => {
-  try {
-    const { deviceId } = req.body;
-    if (!deviceId) return res.status(400).json({ error: 'deviceId required' });
-    await Forwarder.findOneAndUpdate({ deviceId }, { active: false, updatedAt: new Date() });
-    res.json({ ok: true });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: 'Server error' });
-  }
-});
-
-// Fetch latest messages JSON
-app.get('/admin/messages-json', requireAdmin, async (req, res) => {
-  try {
-    const messages = await Message.find().sort({ createdAt: -1 }).limit(50).lean();
-    res.json(messages);
-  } catch {
-    res.status(500).json({ error: 'Failed to fetch messages' });
-  }
-});
-
-// Delete message
+// --- Delete message ---
 app.post('/admin/messages/:id/delete', requireAdmin, async (req, res) => {
   try {
     await Message.findByIdAndDelete(req.params.id);
@@ -216,11 +232,10 @@ app.post('/admin/messages/:id/delete', requireAdmin, async (req, res) => {
   }
 });
 
-// Root redirect
+// --- Root redirect ---
 app.get('/', (req, res) => res.redirect('/admin/login'));
 
-// WebSocket
-io.on('connection', () => console.log('📡 Dashboard connected'));
+// --- Socket.io connection ---
+io.on('connection', socket => console.log('📡 Dashboard connected'));
 
-// Start server
 server.listen(PORT, () => console.log(`🚀 Server running on http://localhost:${PORT}`));
