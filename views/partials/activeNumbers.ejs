@@ -1,0 +1,15 @@
+<div class="sidebar">
+  <h5 class="mt-2">Active Numbers</h5>
+  <div class="forwarder-list">
+    <% if (activeNumbers && activeNumbers.length > 0) { %>
+      <% activeNumbers.forEach(number => { %>
+        <div class="forwarder-item <%= selectedNumber === number ? 'active' : '' %>" 
+             data-number="<%= number %>">
+          <%= number %>
+        </div>
+      <% }) %>
+    <% } else { %>
+      <p class="text-muted ms-2">No active numbers</p>
+    <% } %>
+  </div>
+</div>
