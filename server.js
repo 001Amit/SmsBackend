@@ -48,6 +48,8 @@ app.set('io', io);
 })();
 
 // Middleware
+// Trust the first proxy (e.g., Railway, Heroku)
+app.set('trust proxy', 1);
 app.use(helmet());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
