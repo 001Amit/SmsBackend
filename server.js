@@ -96,7 +96,6 @@ app.post('/api/messages', messagesLimiter, checkApiKey, async (req, res) => {
       return res.status(400).json({ error: 'sender, message, deviceId are required' });
     }
 
-    // Trim SIM numbers
     const sim1 = deviceSim1?.trim() || null;
     const sim2 = deviceSim2?.trim() || null;
 
@@ -169,7 +168,8 @@ function requireAdmin(req, res, next) {
 app.get('/admin/dashboard', requireAdmin, async (req, res) => {
   try {
     const page = parseInt(req.query.page) || 1;
-    const totalMessages = await Message.countDocuments();
+
+    const totalMessages = await Message.countDocuments().catch(() => 0);
     const totalPages = Math.ceil(totalMessages / PAGE_SIZE);
     const currentPage = Math.min(page, totalPages || 1);
 
@@ -177,20 +177,21 @@ app.get('/admin/dashboard', requireAdmin, async (req, res) => {
       .sort({ createdAt: -1 })
       .skip((currentPage - 1) * PAGE_SIZE)
       .limit(PAGE_SIZE)
-      .lean();
+      .lean()
+      .catch(() => []);
 
-    const forwarders = await Forwarder.find({ active: true }).lean();
-    const activeNumbers = forwarders.flatMap(fwd => fwd.activeNumbers);
+    const forwarders = await Forwarder.find({ active: true }).lean().catch(() => []);
+    const activeNumbers = [...new Set(forwarders.flatMap(fwd => fwd.activeNumbers || []))];
 
     res.render('dashboard', {
-      messages,
-      activeNumbers,
+      messages: messages || [],
+      activeNumbers: activeNumbers || [],
       selectedNumber: null,
       currentPage,
       totalPages
     });
   } catch (err) {
-    console.error(err);
+    console.error('Dashboard error:', err);
     res.status(500).send('Server error');
   }
 });
@@ -203,20 +204,21 @@ app.get('/admin/activeNumbers/:number', requireAdmin, async (req, res) => {
       $or: [{ deviceSim1: number }, { deviceSim2: number }]
     })
       .sort({ createdAt: -1 })
-      .lean();
+      .lean()
+      .catch(() => []);
 
-    const forwarders = await Forwarder.find({ active: true }).lean();
-    const activeNumbers = forwarders.flatMap(fwd => fwd.activeNumbers);
+    const forwarders = await Forwarder.find({ active: true }).lean().catch(() => []);
+    const activeNumbers = [...new Set(forwarders.flatMap(fwd => fwd.activeNumbers || []))];
 
     res.render('dashboard', {
-      messages,
-      activeNumbers,
+      messages: messages || [],
+      activeNumbers: activeNumbers || [],
       selectedNumber: number,
       currentPage: 1,
       totalPages: 1
     });
   } catch (err) {
-    console.error(err);
+    console.error('Filter error:', err);
     res.status(500).send('Server error');
   }
 });
@@ -238,4 +240,5 @@ app.get('/', (req, res) => res.redirect('/admin/login'));
 // --- Socket.io connection ---
 io.on('connection', socket => console.log('📡 Dashboard connected'));
 
+// --- Start server ---
 server.listen(PORT, () => console.log(`🚀 Server running on http://localhost:${PORT}`));
