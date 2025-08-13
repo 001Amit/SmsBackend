@@ -12,6 +12,7 @@ const { Server } = require('socket.io');
 const connectDB = require('./config/db');
 const Message = require('./models/Message');
 const Admin = require('./models/Admin');
+const Forwarder = require('./models/Forwarder');
 const bcrypt = require('bcrypt');
 
 const app = express();
@@ -57,10 +58,7 @@ app.use(session({
   secret: process.env.SESSION_SECRET || 'dev-secret',
   resave: false,
   saveUninitialized: false,
-  store: MongoStore.create({
-    mongoUrl: process.env.MONGO_URI,
-    collectionName: 'sessions'
-  }),
+  store: MongoStore.create({ mongoUrl: process.env.MONGO_URI, collectionName: 'sessions' }),
   cookie: { maxAge: 1000 * 60 * 60 * 24 }
 }));
 
@@ -75,9 +73,7 @@ const messagesLimiter = rateLimit({
 // API key middleware
 function checkApiKey(req, res, next) {
   const key = req.header('x-api-key') || req.header('Authorization')?.replace('Bearer ', '');
-  if (!key || key !== process.env.API_KEY) {
-    return res.status(401).json({ error: 'Invalid or missing API key' });
-  }
+  if (!key || key !== process.env.API_KEY) return res.status(401).json({ error: 'Invalid or missing API key' });
   next();
 }
 
@@ -85,9 +81,7 @@ function checkApiKey(req, res, next) {
 app.post('/api/messages', messagesLimiter, checkApiKey, async (req, res) => {
   try {
     const { sender, message, timestamp, deviceId } = req.body;
-    if (!sender || !message || !deviceId) {
-      return res.status(400).json({ error: 'sender, message, and deviceId required' });
-    }
+    if (!sender || !message || !deviceId) return res.status(400).json({ error: 'sender, message, and deviceId required' });
 
     const msg = await Message.create({
       sender,
@@ -95,6 +89,13 @@ app.post('/api/messages', messagesLimiter, checkApiKey, async (req, res) => {
       deviceId,
       timestamp: timestamp ? new Date(timestamp) : undefined
     });
+
+    // Register or update forwarder
+    await Forwarder.findOneAndUpdate(
+      { deviceId },
+      { $set: { active: true, updatedAt: new Date() }, $addToSet: { numbers: sender } },
+      { upsert: true }
+    );
 
     io.emit('newMessage', {
       _id: msg._id,
@@ -129,16 +130,14 @@ function requireAdmin(req, res, next) {
   next();
 }
 
-// Dashboard with pagination
+// Dashboard: all messages + active forwarders
 app.get('/admin/dashboard', requireAdmin, async (req, res) => {
-  const page = parseInt(req.query.page) || 1;
-  if (page < 1) return res.redirect('/admin/dashboard?page=1');
-
   try {
+    const page = parseInt(req.query.page) || 1;
+    if (page < 1) return res.redirect('/admin/dashboard?page=1');
+
     const totalMessages = await Message.countDocuments();
     const totalPages = Math.ceil(totalMessages / PAGE_SIZE);
-
-    // Clamp page number
     const currentPage = Math.min(page, totalPages || 1);
 
     const messages = await Message.find()
@@ -147,8 +146,12 @@ app.get('/admin/dashboard', requireAdmin, async (req, res) => {
       .limit(PAGE_SIZE)
       .lean();
 
+    const forwarders = await Forwarder.find({ active: true }).lean();
+
     res.render('dashboard', {
       messages,
+      forwarders,
+      selectedForwarder: null,
       currentPage,
       totalPages
     });
@@ -158,6 +161,41 @@ app.get('/admin/dashboard', requireAdmin, async (req, res) => {
   }
 });
 
+// View messages for a specific forwarder
+app.get('/admin/forwarders/:deviceId', requireAdmin, async (req, res) => {
+  try {
+    const { deviceId } = req.params;
+    const messages = await Message.find({ deviceId }).sort({ createdAt: -1 }).lean();
+    const forwarders = await Forwarder.find({ active: true }).lean();
+    const selectedForwarder = await Forwarder.findOne({ deviceId }).lean();
+
+    res.render('dashboard', {
+      messages,
+      forwarders,
+      selectedForwarder,
+      currentPage: 1,
+      totalPages: 1
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).send('Server error');
+  }
+});
+
+// Stop a forwarder
+app.post('/api/forwarders/stop', checkApiKey, async (req, res) => {
+  try {
+    const { deviceId } = req.body;
+    if (!deviceId) return res.status(400).json({ error: 'deviceId required' });
+    await Forwarder.findOneAndUpdate({ deviceId }, { active: false, updatedAt: new Date() });
+    res.json({ ok: true });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// Fetch latest messages JSON
 app.get('/admin/messages-json', requireAdmin, async (req, res) => {
   try {
     const messages = await Message.find().sort({ createdAt: -1 }).limit(50).lean();
@@ -167,6 +205,7 @@ app.get('/admin/messages-json', requireAdmin, async (req, res) => {
   }
 });
 
+// Delete message
 app.post('/admin/messages/:id/delete', requireAdmin, async (req, res) => {
   try {
     await Message.findByIdAndDelete(req.params.id);
@@ -177,9 +216,11 @@ app.post('/admin/messages/:id/delete', requireAdmin, async (req, res) => {
   }
 });
 
+// Root redirect
 app.get('/', (req, res) => res.redirect('/admin/login'));
 
 // WebSocket
 io.on('connection', () => console.log('📡 Dashboard connected'));
 
+// Start server
 server.listen(PORT, () => console.log(`🚀 Server running on http://localhost:${PORT}`));
