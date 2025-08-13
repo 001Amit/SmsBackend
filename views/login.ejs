@@ -1,9 +1,87 @@
-<%- include('partials/header') %>
-<div class="row justify-content-center">
-  <div class="col-md-6">
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Admin Login</title>
+  <link rel="stylesheet" href="/css/styles.css">
+  <style>
+    /* Centered login container */
+    body {
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      height: 100vh;
+      background-color: #f4f6f8;
+      margin: 0;
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    }
+
+    .login-container {
+      background-color: #fff;
+      padding: 40px 30px;
+      border-radius: 8px;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.08);
+      width: 100%;
+      max-width: 400px;
+      text-align: center;
+    }
+
+    .login-container h3 {
+      color: #0d6efd;
+      margin-bottom: 20px;
+      font-weight: 600;
+    }
+
+    .form-label {
+      display: block;
+      text-align: left;
+      font-weight: 500;
+      margin-bottom: 5px;
+      color: #444;
+    }
+
+    input.form-control {
+      width: 100%;
+      padding: 10px 12px;
+      margin-bottom: 15px;
+      border: 1px solid #ced4da;
+      border-radius: 6px;
+      box-sizing: border-box;
+      font-size: 1rem;
+    }
+
+    .btn-primary {
+      width: 100%;
+      padding: 10px;
+      background-color: #0d6efd;
+      border: none;
+      border-radius: 6px;
+      color: #fff;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background-color 0.2s;
+    }
+
+    .btn-primary:hover {
+      background-color: #0b5ed7;
+    }
+
+    .alert {
+      background-color: #dc3545;
+      color: #fff;
+      padding: 10px;
+      border-radius: 6px;
+      margin-bottom: 15px;
+      font-size: 0.95rem;
+    }
+  </style>
+</head>
+<body>
+  <div class="login-container">
     <h3>Admin Login</h3>
     <% if (error) { %>
-      <div class="alert alert-danger"><%= error %></div>
+      <div class="alert"><%= error %></div>
     <% } %>
     <form method="post" action="/admin/login">
       <div class="mb-3">
@@ -14,8 +92,8 @@
         <label class="form-label">Password</label>
         <input name="password" type="password" class="form-control" required />
       </div>
-      <button class="btn btn-primary">Login</button>
+      <button class="btn-primary">Login</button>
     </form>
   </div>
-</div>
-<%- include('partials/footer') %>
+</body>
+</html>
