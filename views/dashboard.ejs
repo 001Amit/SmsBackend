@@ -1,91 +1,67 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Admin Dashboard</title>
-  <link rel="stylesheet" href="/css/styles.css">
-  <script src="/socket.io/socket.io.js"></script>
-  <style>
-    /* Logout button */
-    .logout-button {
-      position: fixed;
-      top: 20px;
-      right: 20px;
-      padding: 8px 16px;
-      background-color: #dc3545;
-      color: #fff;
-      border: none;
-      border-radius: 6px;
-      cursor: pointer;
-      font-weight: 500;
-      transition: background-color 0.2s ease-in-out;
-      z-index: 1000;
-    }
+<%- include('partials/header') %>
 
-    .logout-button:hover {
-      background-color: #c82333;
-    }
-  </style>
-</head>
-<body>
-  <form action="/admin/logout" method="GET">
-    <button type="submit" class="logout-button">Logout</button>
-  </form>
 
-  <div class="dashboard-container">
 
-    <!-- Sidebar: Active Numbers -->
-    <div class="sidebar">
-      <h5>Active Numbers</h5>
-      <div class="forwarder-list">
-        <% if (activeNumbers && activeNumbers.length > 0) { %>
-          <% activeNumbers.forEach(number => { %>
-            <div class="forwarder-item <%= selectedNumber === number ? 'active' : '' %>" 
-                 data-number="<%= number %>">
-              <%= number %>
-            </div>
-          <% }) %>
-        <% } else { %>
-          <p class="text-muted">No active numbers</p>
-        <% } %>
-      </div>
-    </div>
+<div class="dashboard-container">
 
-    <!-- Messages Section -->
-    <div class="messages-section">
-      <h3>Messages <%= selectedNumber ? `(Filtered: ${selectedNumber})` : '' %></h3>
-      <table class="messages-table">
-        <thead>
-          <tr>
-            <th>Sender</th>
-            <th>Message</th>
-            <th>SIM1</th>
-            <th>SIM2</th>
-            <th>Time</th>
-            <th>Action</th>
-          </tr>
-        </thead>
-        <tbody id="messages-body">
-          <% messages.forEach(msg => { %>
-            <tr>
-              <td><%= msg.sender %></td>
-              <td><%= msg.message %></td>
-              <td><%= msg.deviceSim1 || '-' %></td>
-              <td><%= msg.deviceSim2 || '-' %></td>
-              <td><%= new Date(msg.createdAt).toLocaleString() %></td>
-              <td>
-                <form action="/admin/messages/<%= msg._id %>/delete" method="POST">
-                  <button type="submit">Delete</button>
-                </form>
-              </td>
-            </tr>
-          <% }) %>
-        </tbody>
-      </table>
+  <!-- Sidebar: Active Numbers -->
+  <div class="sidebar">
+    <h5 class="mt-2">Active Numbers</h5>
+    <div class="forwarder-list">
+      <% if (activeNumbers && activeNumbers.length > 0) { %>
+        <% activeNumbers.forEach(number => { %>
+          <a href="/admin/activeNumbers/<%= number %>" 
+             class="forwarder-item <%= selectedNumber === number ? 'active' : '' %>">
+            <%= number %>
+          </a>
+        <% }) %>
+      <% } else { %>
+        <p class="text-muted ms-2">No active numbers</p>
+      <% } %>
     </div>
   </div>
 
+  <!-- Messages Section -->
+  <div class="messages-section">
+    <h3>Messages <%= selectedNumber ? `(Filtered: ${selectedNumber})` : '' %></h3>
+
+    <!-- Back button to remove filter -->
+    <% if (selectedNumber) { %>
+      <a href="/admin/dashboard" class="btn btn-secondary mb-2">← Show All Messages</a>
+    <% } %>
+
+    <table class="messages-table">
+      <thead>
+        <tr>
+          <th>Sender</th>
+          <th>Message</th>
+          <th>SIM1</th>
+          <th>SIM2</th>
+          <th>Time</th>
+          <th>Action</th>
+        </tr>
+      </thead>
+      <tbody id="messages-body">
+        <% messages.forEach(msg => { %>
+          <tr>
+            <td><%= msg.sender %></td>
+            <td><%= msg.message %></td>
+            <td><%= msg.deviceSim1 || '-' %></td>
+            <td><%= msg.deviceSim2 || '-' %></td>
+            <td><%= new Date(msg.createdAt).toLocaleString() %></td>
+            <td>
+              <form action="/admin/messages/<%= msg._id %>/delete" method="POST">
+                <button type="submit">Delete</button>
+              </form>
+            </td>
+          </tr>
+        <% }) %>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<script src="/socket.io/socket.io.js"></script>
 <script>
   const socket = io();
 
@@ -110,13 +86,6 @@
       tbody.prepend(row);
     }
   });
-
-  document.querySelectorAll('.forwarder-item').forEach(item => {
-    item.addEventListener('click', () => {
-      const number = item.dataset.number;
-      window.location.href = `/admin/activeNumbers/${number}`;
-    });
-  });
 </script>
-</body>
-</html>
+
+<%- include('partials/footer') %>
